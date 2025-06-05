@@ -1,0 +1,59 @@
+# AnimeQA Project Configuration File
+
+# HuggingFace Configuration
+huggingface:
+  endpoint: "https://hfmirror.io"
+  # token is read from environment variable
+
+# Database Configuration
+database:
+  path: "./data/anime_qa.db"
+
+# Model Configuration
+model:
+  base_model_name: "microsoft/DialoGPT-medium"
+  save_path: "./models/anime-qa-model"
+  cache_dir: "./cache/models"
+
+# Data Configuration
+data:
+  dataset_name: "Crystalcareai/Anime-Character-Chat"
+  cache_dir: "./cache/datasets"
+  processed_path: "./data/processed"
+
+# API Configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+  enable_cors: true
+  # api_key is read from environment variable
+
+# Training Configuration
+training:
+  batch_size: 4
+  learning_rate: 0.00005
+  num_epochs: 3
+  max_length: 512
+  lora_config:
+    rank: 16
+    alpha: 32
+    dropout: 0.1
+
+# Inference Configuration
+inference:
+  max_length: 128
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  file: "./logs/anime_qa.log"
+  format: "[{time:YYYY-MM-DD HH:mm:ss}] {level} | {message}"
+
+# Cache Configuration
+cache:
+  enable: true
+  max_size: 1000
+  ttl: 3600  # Cache expiration time in seconds
