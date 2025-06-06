@@ -1,0 +1,74 @@
+# AnimeQA Project Test Configuration File
+
+# HuggingFace Configuration
+huggingface:
+  endpoint: "https://hf-mirror.com"
+
+# Database Configuration  
+database:
+  path: "./data/anime_qa_test.db"
+
+# Model Configuration - 使用最小模型
+model:
+  base_model_name: "microsoft/DialoGPT-small"
+  save_path: "./models/anime-qa-model-test"
+  cache_dir: "./cache/models"
+
+# Data Configuration
+data:
+  dataset_name: "local"
+  dataset_path: "./dataset"
+  dataset_file: "metadata.jsonl"
+  cache_dir: "./cache/datasets"
+  processed_path: "./data/processed_test"
+
+# API Configuration
+api:
+  host: "0.0.0.0"
+  port: 8001
+  enable_cors: true
+
+# Training Configuration - 超快速测试
+training:
+  # 样本限制 - 这是关键配置
+  max_train_samples: 50       # 只用50个训练样本
+  max_val_samples: 10         # 只用10个验证样本
+  
+  # 训练参数
+  batch_size: 4               # 增加批次大小（GPU可以支持）
+  gradient_accumulation_steps: 1  # 减少梯度累积
+  learning_rate: 0.0002       # 提高学习率
+  num_epochs: 1               # 只训练1个epoch
+  max_length: 128             # 减少序列长度
+  warmup_steps: 5             # 减少warmup步数
+  
+  # 保存和评估频率
+  save_steps: 20              # 每20步保存
+  eval_steps: 10              # 每10步评估
+  logging_steps: 2            # 每2步记录
+  
+  # LoRA配置
+  lora_config:
+    rank: 8
+    alpha: 16
+    dropout: 0.1
+    target_modules: ["c_attn", "c_proj"]
+
+# Inference Configuration
+inference:
+  max_length: 64
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  file: "./logs/anime_qa_test.log"
+  format: "[{time:YYYY-MM-DD HH:mm:ss}] {level} | {message}"
+
+# Cache Configuration
+cache:
+  enable: true
+  max_size: 100
+  ttl: 1800

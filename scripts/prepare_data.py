@@ -1,13 +1,7 @@
-"""
-Data preparation script for AnimeQA project
-Integrates all data processing and database initialization modules
-"""
-
 import argparse
 import sys
 from pathlib import Path
 import logging
-from typing import Optional
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent

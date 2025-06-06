@@ -1,6 +1,8 @@
-"""
-Scripts module for AnimeQA project
-Provides utility scripts for data preparation and model training
-"""
-
-__all__ = []
+__all__ = [
+    # Data preparation
+    'prepare_data',
+    
+    # Training and evaluation
+    'finetune', 
+    'evaluate'
+]

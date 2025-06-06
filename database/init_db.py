@@ -1,7 +1,13 @@
-import sqlite3
-from pathlib import Path
-import logging
+import os
+import sys
 import json
+import argparse
+import logging
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from config import get_database_path, settings
 from .models import DatabaseConnection, QAPairModel, ModelInfoModel
@@ -32,8 +38,11 @@ class DatabaseInitializer:
             # Ensure database directory exists
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
             
-            # Create tables
+            # Create tables - 确保两个表都创建
+            logger.info("Creating QA pairs table...")
             self.qa_model.create_table()
+            
+            logger.info("Creating model info table...")
             self.model_info.create_table()
             
             logger.info("Database created successfully")
@@ -108,8 +117,8 @@ class DatabaseInitializer:
     def load_processed_data(self, data_file: str = None):
         """Load processed QA data from file"""
         if not data_file:
-            # Use default processed data file
-            data_file = Path(settings.data.processed_path) / "train_qa_dataset.json"
+            # Use default processed data file - 使用正确的文件名
+            data_file = Path(settings.data.processed_path) / "processed_qa_dataset.json"
         
         data_file = Path(data_file)
         
@@ -146,26 +155,29 @@ class DatabaseInitializer:
             if not existing_models:
                 logger.info("Creating default model info entry...")
                 
-                training_config = json.dumps({
-                    "base_model": settings.model.base_model_name,
-                    "lora_rank": settings.training.lora_config.rank,
-                    "lora_alpha": settings.training.lora_config.alpha,
-                    "learning_rate": settings.training.learning_rate,
-                    "batch_size": settings.training.batch_size,
-                    "num_epochs": settings.training.num_epochs
-                })
+                # Create default model entry
+                model_name = "anime-qa-model-test"
+                model_path = settings.model.save_path
+                base_model = settings.model.base_model_name
                 
                 self.model_info.insert_model_info(
-                    model_name="anime-qa-model-v1",
-                    model_path=settings.model.save_path,
-                    base_model=settings.model.base_model_name,
-                    training_data_size=0,  # Will be updated after training
-                    training_config=training_config
+                    model_name=model_name,
+                    model_path=model_path,
+                    base_model=base_model,
+                    training_data_size=0,
+                    training_config=json.dumps({
+                        "lora_rank": settings.training.lora_config.rank,
+                        "lora_alpha": settings.training.lora_config.alpha,
+                        "learning_rate": settings.training.learning_rate,
+                        "batch_size": settings.training.batch_size
+                    })
                 )
                 
                 # Set as active model
-                self.model_info.set_active_model("anime-qa-model-v1")
-                logger.info("Default model info created")
+                self.model_info.set_active_model(model_name)
+                logger.info(f"Created and activated default model: {model_name}")
+            else:
+                logger.info(f"Found {len(existing_models)} existing model(s)")
             
         except Exception as e:
             logger.error(f"Failed to create default model info: {e}")
@@ -196,9 +208,14 @@ class DatabaseInitializer:
             
             # Create database and tables
             if not self.check_database_exists():
+                logger.info("Creating new database...")
                 self.create_database()
             else:
                 logger.info("Database already exists")
+                # 即使数据库存在，也要确保所有表都创建了
+                logger.info("Ensuring all tables exist...")
+                self.qa_model.create_table()
+                self.model_info.create_table()
             
             # Load sample data if requested
             if load_sample:
@@ -206,10 +223,9 @@ class DatabaseInitializer:
             
             # Load processed data if available
             if load_processed:
-                try:
-                    self.load_processed_data()
-                except Exception as e:
-                    logger.warning(f"Could not load processed data: {e}")
+                processed_count = self.load_processed_data()
+                if processed_count == 0:
+                    logger.info("No processed data loaded")
             
             # Create default model info
             self.create_default_model_info()
@@ -245,8 +261,6 @@ def init_database(reset: bool = False, load_sample: bool = False,
         raise
 
 if __name__ == "__main__":
-    import argparse
-    
     parser = argparse.ArgumentParser(description="Initialize AnimeQA database")
     parser.add_argument("--reset", action="store_true", 
                        help="Reset database (delete existing)")

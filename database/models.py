@@ -1,8 +1,9 @@
 import sqlite3
+import json
+import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Any
 from pathlib import Path
-import logging
 
 from config import get_database_path
 
@@ -53,6 +54,21 @@ class DatabaseConnection:
         except Exception as e:
             logger.error(f"Command execution failed: {e}")
             raise
+    
+    def execute_multiple_commands(self, commands: List[str]) -> int:
+        """Execute multiple commands in a transaction"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                total_affected = 0
+                for command in commands:
+                    cursor.execute(command)
+                    total_affected += cursor.rowcount
+                conn.commit()
+                return total_affected
+        except Exception as e:
+            logger.error(f"Multiple commands execution failed: {e}")
+            raise
 
 class QAPairModel:
     """Model for managing QA pairs data"""
@@ -62,8 +78,9 @@ class QAPairModel:
         self.db = db_connection or DatabaseConnection()
     
     def create_table(self):
-        """Create qa_pairs table"""
-        create_sql = """
+        """Create qa_pairs table with proper SQL execution"""
+        # 分别定义每个SQL语句
+        create_table_sql = """
         CREATE TABLE IF NOT EXISTS qa_pairs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             question TEXT NOT NULL,
@@ -74,16 +91,26 @@ class QAPairModel:
         )
         """
         
-        # Create index for better query performance
-        index_sql = """
-        CREATE INDEX IF NOT EXISTS idx_qa_pairs_character ON qa_pairs(character);
-        CREATE INDEX IF NOT EXISTS idx_qa_pairs_anime ON qa_pairs(anime);
+        # 索引语句分别执行
+        index_character_sql = """
+        CREATE INDEX IF NOT EXISTS idx_qa_pairs_character ON qa_pairs(character)
+        """
+        
+        index_anime_sql = """
+        CREATE INDEX IF NOT EXISTS idx_qa_pairs_anime ON qa_pairs(anime)
         """
         
         try:
-            self.db.execute_command(create_sql)
-            self.db.execute_command(index_sql)
+            # 分别执行每条SQL语句
+            self.db.execute_command(create_table_sql)
             logger.info("QA pairs table created successfully")
+            
+            self.db.execute_command(index_character_sql)
+            logger.info("Character index created successfully")
+            
+            self.db.execute_command(index_anime_sql)
+            logger.info("Anime index created successfully")
+            
         except Exception as e:
             logger.error(f"Failed to create qa_pairs table: {e}")
             raise
@@ -97,15 +124,18 @@ class QAPairModel:
         """
         
         try:
-            self.db.execute_command(insert_sql, (question, answer, character, anime))
+            affected_rows = self.db.execute_command(insert_sql, (question, answer, character, anime))
             logger.debug(f"Inserted QA pair: {question[:50]}...")
-            return 1
+            return affected_rows
         except Exception as e:
             logger.error(f"Failed to insert QA pair: {e}")
             raise
     
     def batch_insert_qa_pairs(self, qa_pairs: List[Dict[str, Any]]) -> int:
         """Batch insert multiple QA pairs"""
+        if not qa_pairs:
+            return 0
+        
         insert_sql = """
         INSERT INTO qa_pairs (question, answer, character, anime)
         VALUES (?, ?, ?, ?)
@@ -115,19 +145,22 @@ class QAPairModel:
             with self.db.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                data_tuples = []
+                # 准备批量插入数据
+                batch_data = []
                 for qa_pair in qa_pairs:
-                    data_tuples.append((
-                        qa_pair.get('question', ''),
-                        qa_pair.get('answer', ''),
-                        qa_pair.get('character'),
-                        qa_pair.get('anime')
-                    ))
+                    question = qa_pair.get('question', '').strip()
+                    answer = qa_pair.get('answer', '').strip()
+                    character = qa_pair.get('character', '')
+                    anime = qa_pair.get('anime', '')
+                    
+                    if question and answer:  # 只插入有效数据
+                        batch_data.append((question, answer, character, anime))
                 
-                cursor.executemany(insert_sql, data_tuples)
+                # 批量执行插入
+                cursor.executemany(insert_sql, batch_data)
                 conn.commit()
                 
-                inserted_count = cursor.rowcount
+                inserted_count = len(batch_data)
                 logger.info(f"Batch inserted {inserted_count} QA pairs")
                 return inserted_count
                 
@@ -225,12 +258,12 @@ class ModelInfoModel:
         """
         
         try:
-            self.db.execute_command(insert_sql, (
+            affected_rows = self.db.execute_command(insert_sql, (
                 model_name, model_path, base_model, 
                 training_data_size, training_config
             ))
             logger.info(f"Inserted model info: {model_name}")
-            return 1
+            return affected_rows
         except Exception as e:
             logger.error(f"Failed to insert model info: {e}")
             raise
@@ -238,17 +271,28 @@ class ModelInfoModel:
     def set_active_model(self, model_name: str) -> int:
         """Set a model as active (deactivate others)"""
         try:
-            # Deactivate all models
-            self.db.execute_command("UPDATE model_info SET is_active = FALSE")
+            # 使用事务处理两个更新操作
+            commands = [
+                "UPDATE model_info SET is_active = FALSE",
+                f"UPDATE model_info SET is_active = TRUE WHERE model_name = '{model_name}'"
+            ]
             
-            # Activate specified model
-            update_sql = "UPDATE model_info SET is_active = TRUE WHERE model_name = ?"
-            updated_count = self.db.execute_command(update_sql, (model_name,))
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 先取消所有模型的激活状态
+                cursor.execute("UPDATE model_info SET is_active = FALSE")
+                
+                # 激活指定模型
+                cursor.execute("UPDATE model_info SET is_active = TRUE WHERE model_name = ?", (model_name,))
+                updated_count = cursor.rowcount
+                
+                conn.commit()
             
             if updated_count > 0:
-                logger.info(f"Set active model: {model_name}")
+                logger.info(f"Set {model_name} as active model")
             else:
-                logger.warning(f"Model not found: {model_name}")
+                logger.warning(f"Model {model_name} not found")
             
             return updated_count
             

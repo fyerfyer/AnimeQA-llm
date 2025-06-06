@@ -42,21 +42,311 @@ venv.bak/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Model files and checkpoints
-models/
-checkpoints/
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Cache directories
+.cache/
+.pytest_cache/
+/cache/
+cache/
+/cache*
+cache*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# ================================
+# Machine Learning & Model Files
+# ================================
+
+# Model files and weights
 *.bin
 *.safetensors
 *.pt
 *.pth
-adapter_*
+*.ckpt
+*.h5
+*.pkl
+*.pickle
+
+# Model directories
+
+/model/
+model/
+/anime-qa-model
+anime-qa-model/
+**/model/**
+
+# Except for model configuration files
+!models/.gitkeep
+!models/README.md
+!**/config.json
+!**/tokenizer.json
+!**/tokenizer_config.json
+!**/special_tokens_map.json
+!**/vocab.txt
+
+# HuggingFace cache
+transformers_cache/
+huggingface_cache/
+.transformers_cache/
+.huggingface_cache/
+
+# ================================
+# Data Files
+# ================================
+
+# Raw and processed data
+data/raw/
+data/processed/
+data/processed_*/
+/data/processed*
+/data/raw*
+/data/*.db
+/data/*.sqlite
+/data/*.sqlite3
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Dataset files
+*.csv
+*.json
+*.parquet
+*.arrow
+*.feather
+*.h5
+*.hdf5
+
+# Except for configuration and sample files
+!config/*.json
+!config/*.yaml
+!config/*.yml
+!data/samples/
+!data/examples/
+!data/.gitkeep
+!data/README.md
+
+!**/sample_*.json
+!**/example_*.json
+
+# ================================
+# Training and Logs
+# ================================
+
+# Log files
+logs/
+/logs/
+*.log
+*.log.*
+log_*.txt
+training_*.log
+evaluation_*.log
+
+# Training outputs
+runs/
+tensorboard/
+wandb/
+mlruns/
+checkpoints/
+/checkpoints/
+checkpoint-*/
+training_results/
+evaluation_results/
+
+# Training temporary files
+trainer_state.json
+training_args.bin
+optimizer.pt
+scheduler.pt
+rng_state.pth
+
+# ================================
+# HuggingFace and Transformers
+# ================================
+
+# HuggingFace Hub cache
+.huggingface/
+huggingface_hub/
+hub/
+
+# Tokenizer cache
+tokenizers_cache/
+.tokenizers_cache/
+
+# PEFT/LoRA adapter files
+adapter_*/
+peft_*/
+lora_*/
+
+# Model snapshots and downloads
+snapshots/
+downloads/
+blobs/
+
+# ================================
+# Configuration and Secrets
+# ================================
+
+# Environment files (keep examples)
+.env
+.env.local
+.env.production
+.env.staging
+!.env.example
+
+# Configuration overrides
+config.local.yaml
+config.local.yml
+config.override.*
+local_config.*
+
+# API keys and tokens
+*.key
+*.token
+api_keys.txt
+secrets.txt
+
+# ================================
+# Docker and Deployment
+# ================================
+
+# Docker
+.docker/
+docker-data/
+Dockerfile.local
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Deployment
+deployment/
+k8s-local/
+helm-values.local.yaml
+
+# ================================
+# Development and Testing
+# ================================
+
+# Testing
+.coverage
+.pytest_cache/
+.tox/
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Profiling
+*.prof
+*.profile
+
+# Debug files
+debug/
+debug_*.py
+debug_*.txt
+
+# ================================
+# Project Specific
+# ================================
+
+# Quick test files
+quick_test_*.py
+test_*.py
+debug_*.py
+experiment_*.py
+
+# Temporary model outputs
+output/
+outputs/
+results/
+experiments/
+
+# Backup files
+backup/
+backups/
+*.backup
+*.bak
+
+# Documentation builds
+docs/_build/
+docs/build/
+site/
+
+# Large datasets
+dataset_large/
+data_large/
+*.zip
+*.tar.gz
+*.tar.bz2
+*.7z
+
+# ================================
+# Performance and Monitoring
+# ================================
+
+# Profiling and monitoring
+*.profile
+*.prof
+monitoring/
+metrics/
+
+# Memory dumps
+*.dmp
+core.*
+
+# ================================
+# Exclude specific generated files
+# ================================
+
+# Test model structure output
+test_model_structure.py
+model_structure_output.txt
+debug_model_info.txt
+
+# Quick setup files
+quick_setup.py
+temp_*.py
+
+# Generated configuration
+generated_config.*
+auto_config.*
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+myenv/
+/myenv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
 
 # Data files
 data/raw/
 data/processed/
 *.csv
 *.json
-*.jsonl
 !data/samples/
 !config/*.json
 
@@ -86,3 +376,6 @@ temp/
 /docs
 /docs/
 /docs*
+/cache
+cache/*
+/cache/

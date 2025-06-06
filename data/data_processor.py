@@ -1,9 +1,10 @@
 import os
+import re
 import json
 import pandas as pd
+import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-import logging
 from datasets import load_dataset, Dataset
 
 from config import settings, get_hf_endpoint, ensure_directories
@@ -18,9 +19,17 @@ class AnimeDataProcessor:
     def __init__(self):
         """Initialize data processor"""
         self.dataset_name = settings.data.dataset_name
+        self.dataset_path = getattr(settings.data, 'dataset_path', './dataset')
+        self.dataset_file = getattr(settings.data, 'dataset_file', 'metadata.jsonl')
         self.cache_dir = settings.data.cache_dir
         self.processed_path = settings.data.processed_path
         self.hf_endpoint = get_hf_endpoint()
+        
+        # 打印调试信息
+        logger.info(f"DataProcessor initialized with:")
+        logger.info(f"  Dataset name: {self.dataset_name}")
+        logger.info(f"  Dataset path: {self.dataset_path}")
+        logger.info(f"  Dataset file: {self.dataset_file}")
         
         # Ensure directories exist
         ensure_directories()
@@ -30,27 +39,68 @@ class AnimeDataProcessor:
             os.environ['HF_ENDPOINT'] = self.hf_endpoint
             logger.info(f"Using HuggingFace mirror: {self.hf_endpoint}")
     
-    def load_raw_dataset(self) -> Dataset:
-        """Load raw dataset from HuggingFace"""
+    def load_local_dataset(self) -> List[Dict[str, Any]]:
+        """Load dataset from local jsonl file"""
         try:
-            logger.info(f"Loading dataset: {self.dataset_name}")
+            local_file = Path(self.dataset_path) / self.dataset_file
             
-            dataset = load_dataset(
-                self.dataset_name,
-                cache_dir=self.cache_dir,
-                trust_remote_code=True
-            )
+            if not local_file.exists():
+                raise FileNotFoundError(f"Local dataset file not found: {local_file}")
             
-            # Use train split if available, otherwise use the first available split
-            if 'train' in dataset:
-                dataset = dataset['train']
+            logger.info(f"Loading local dataset: {local_file}")
+            
+            data = []
+            with open(local_file, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    try:
+                        line = line.strip()
+                        if line:  # Skip empty lines
+                            item = json.loads(line)
+                            data.append(item)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Skipping invalid JSON on line {line_num}: {e}")
+                        continue
+            
+            logger.info(f"Loaded {len(data)} samples from local dataset")
+            return data
+            
+        except Exception as e:
+            logger.error(f"Failed to load local dataset: {e}")
+            raise
+    
+    def load_raw_dataset(self) -> Dataset:
+        """Load raw dataset from HuggingFace or local file"""
+        try:
+            # Check if using local dataset
+            if self.dataset_name.lower() == "local":
+                logger.info("Using local dataset")
+                data = self.load_local_dataset()
+                
+                # Convert to HuggingFace Dataset format
+                dataset = Dataset.from_list(data)
+                logger.info(f"Created HuggingFace dataset with {len(dataset)} samples")
+                return dataset
+            
             else:
-                available_splits = list(dataset.keys())
-                logger.info(f"Available splits: {available_splits}")
-                dataset = dataset[available_splits[0]]
-            
-            logger.info(f"Loaded {len(dataset)} samples from dataset")
-            return dataset
+                # Load from HuggingFace Hub
+                logger.info(f"Loading dataset from Hub: {self.dataset_name}")
+                
+                dataset = load_dataset(
+                    self.dataset_name,
+                    cache_dir=self.cache_dir,
+                    trust_remote_code=True
+                )
+                
+                # Use train split if available, otherwise use the first available split
+                if 'train' in dataset:
+                    dataset = dataset['train']
+                else:
+                    split_name = list(dataset.keys())[0]
+                    dataset = dataset[split_name]
+                    logger.info(f"Using split: {split_name}")
+                
+                logger.info(f"Loaded {len(dataset)} samples from dataset")
+                return dataset
             
         except Exception as e:
             logger.error(f"Failed to load dataset: {e}")
@@ -67,7 +117,6 @@ class AnimeDataProcessor:
         
         # Remove special characters that might interfere with training
         # Keep basic punctuation for natural conversation
-        import re
         text = re.sub(r'[^\w\s\.\!\?\,\:\;\-\(\)\[\]\"\']+', '', text)
         
         return text
@@ -76,10 +125,10 @@ class AnimeDataProcessor:
         """Extract relevant text fields from dataset sample"""
         extracted = {}
         
-        # Common field names to look for
-        text_fields = ['text', 'content', 'message', 'conversation', 'chat']
-        character_fields = ['character', 'name', 'speaker', 'character_name']
-        anime_fields = ['anime', 'title', 'series', 'source']
+        # Common field names to look for in anime dataset
+        text_fields = ['text', 'content', 'message', 'conversation', 'chat', 'caption', 'description']
+        character_fields = ['character', 'name', 'speaker', 'character_name', 'persona']
+        anime_fields = ['anime', 'title', 'series', 'source', 'show']
         
         # Extract main text content
         for field in text_fields:
@@ -103,11 +152,9 @@ class AnimeDataProcessor:
         if 'text' not in extracted and isinstance(sample, dict):
             # Look for text in nested structures
             for key, value in sample.items():
-                if isinstance(value, dict):
-                    nested_text = self.extract_text_fields(value)
-                    if 'text' in nested_text:
-                        extracted.update(nested_text)
-                        break
+                if isinstance(value, str) and len(value) > 20:  # Assume longer strings are content
+                    extracted['text'] = self.clean_text(value)
+                    break
         
         return extracted
     
@@ -126,7 +173,7 @@ class AnimeDataProcessor:
                 character = extracted.get('character', '')
                 anime = extracted.get('anime', '')
                 
-                # Generate Q&A pairs based on text content
+                # Generate Q&A pairs from extracted text
                 generated_pairs = self._generate_qa_from_text(text, character, anime)
                 qa_pairs.extend(generated_pairs)
                 
@@ -204,17 +251,11 @@ class AnimeDataProcessor:
                 question = qa_pair.get('question', '').strip()
                 answer = qa_pair.get('answer', '').strip()
                 
-                # Validation rules
-                if not question or not answer:
-                    continue
-                
+                # Basic validation
                 if len(question) < 5 or len(answer) < 10:
                     continue
                 
-                if len(question) > 500 or len(answer) > 1000:
-                    continue
-                
-                # Check for meaningful content
+                # Remove duplicates and low-quality pairs
                 if question.lower() in ['', 'none', 'null', 'n/a']:
                     continue
                 
@@ -255,8 +296,7 @@ class AnimeDataProcessor:
             input_file = Path(self.processed_path) / filename
             
             if not input_file.exists():
-                logger.warning(f"Processed data file not found: {input_file}")
-                return []
+                raise FileNotFoundError(f"Processed data file not found: {input_file}")
             
             with open(input_file, 'r', encoding='utf-8') as f:
                 qa_pairs = json.load(f)
@@ -311,8 +351,9 @@ class AnimeDataProcessor:
             
             # Step 6: Generate statistics
             stats = self.get_dataset_statistics(filtered_pairs)
-            logger.info(f"Processing completed. Statistics: {stats}")
+            logger.info(f"Dataset statistics: {stats}")
             
+            logger.info("Data processing pipeline completed successfully!")
             return filtered_pairs
             
         except Exception as e:
@@ -332,9 +373,9 @@ if __name__ == "__main__":
         print(f"Generated {len(qa_pairs)} QA pairs")
         
         if qa_pairs:
-            print(f"\nSample QA pair:")
+            print(f"Sample QA pair:")
             print(f"Q: {qa_pairs[0]['question']}")
-            print(f"A: {qa_pairs[0]['answer'][:200]}...")
+            print(f"A: {qa_pairs[0]['answer'][:100]}...")
         
     except Exception as e:
         print(f"Processing failed: {e}")

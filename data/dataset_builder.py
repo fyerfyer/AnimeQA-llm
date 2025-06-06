@@ -1,8 +1,10 @@
+import os
+import sys
 import json
+import logging
 import pandas as pd
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
-import logging
 from datasets import Dataset
 from transformers import AutoTokenizer
 
@@ -27,6 +29,14 @@ class AnimeQADatasetBuilder:
         self.max_length = settings.training.max_length
         self.processed_path = settings.data.processed_path
         
+        # 获取样本限制配置
+        self.max_train_samples = getattr(settings.training, 'max_train_samples', None)
+        self.max_val_samples = getattr(settings.training, 'max_val_samples', None)
+        
+        logger.info(f"Dataset builder initialized:")
+        logger.info(f"  Max train samples: {self.max_train_samples}")
+        logger.info(f"  Max val samples: {self.max_val_samples}")
+        
         ensure_directories()
     
     def load_tokenizer(self, model_name: str = None):
@@ -44,6 +54,7 @@ class AnimeQADatasetBuilder:
             # Add special tokens if needed
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
+                logger.info("Set pad_token to eos_token")
             
             logger.info("Tokenizer loaded successfully")
             
@@ -51,10 +62,13 @@ class AnimeQADatasetBuilder:
             logger.error(f"Failed to load tokenizer: {e}")
             raise
     
-    def get_qa_pairs_from_database(self) -> List[Dict[str, str]]:
-        """Get QA pairs from database"""
+    def get_qa_pairs_from_database(self, limit: int = None) -> List[Dict[str, str]]:
+        """Get QA pairs from database with optional limit"""
         try:
-            qa_pairs = self.qa_model.get_qa_pairs()
+            if limit:
+                qa_pairs = self.qa_model.get_qa_pairs(limit=limit)
+            else:
+                qa_pairs = self.qa_model.get_qa_pairs()
             logger.info(f"Loaded {len(qa_pairs)} QA pairs from database")
             return qa_pairs
             
@@ -62,10 +76,14 @@ class AnimeQADatasetBuilder:
             logger.warning(f"Failed to load QA pairs from database: {e}")
             return []
     
-    def get_qa_pairs_from_file(self, filename: str = "processed_qa_dataset.json") -> List[Dict[str, str]]:
-        """Get QA pairs from processed file"""
+    def get_qa_pairs_from_file(self, filename: str = "processed_qa_dataset.json", 
+                              limit: int = None) -> List[Dict[str, str]]:
+        """Get QA pairs from processed file with optional limit"""
         try:
             qa_pairs = self.data_processor.load_processed_data(filename)
+            if limit and len(qa_pairs) > limit:
+                qa_pairs = qa_pairs[:limit]
+                logger.info(f"Limited QA pairs to {limit} samples")
             return qa_pairs
             
         except Exception as e:
@@ -76,6 +94,11 @@ class AnimeQADatasetBuilder:
         """Prepare data for conversational training"""
         training_data = []
         
+        # 确保tokenizer已加载
+        if self.tokenizer is None:
+            logger.info("Tokenizer not loaded, loading now...")
+            self.load_tokenizer()
+        
         for qa_pair in qa_pairs:
             try:
                 question = qa_pair.get('question', '').strip()
@@ -84,16 +107,16 @@ class AnimeQADatasetBuilder:
                 if not question or not answer:
                     continue
                 
-                # Format for conversational training
-                # Using the format expected by dialog models
-                conversation = {
-                    'input_text': question,
-                    'target_text': answer,
+                # 创建对话格式的训练数据 - 使用已加载的tokenizer
+                conversation = f"{question} {self.tokenizer.eos_token} {answer}"
+                
+                training_data.append({
+                    'text': conversation,
+                    'question': question,
+                    'answer': answer,
                     'character': qa_pair.get('character', ''),
                     'anime': qa_pair.get('anime', '')
-                }
-                
-                training_data.append(conversation)
+                })
                 
             except Exception as e:
                 logger.warning(f"Failed to prepare training sample: {e}")
@@ -105,6 +128,7 @@ class AnimeQADatasetBuilder:
     def tokenize_conversations(self, conversations: List[Dict[str, str]]) -> Dict[str, List]:
         """Tokenize conversations for training"""
         if not self.tokenizer:
+            logger.info("Loading tokenizer for tokenization...")
             self.load_tokenizer()
         
         tokenized_data = {
@@ -115,62 +139,24 @@ class AnimeQADatasetBuilder:
         
         for conv in conversations:
             try:
-                input_text = conv['input_text']
-                target_text = conv['target_text']
+                text = conv['text']
                 
-                # Tokenize input
-                input_encoding = self.tokenizer(
-                    input_text,
+                # Tokenize the conversation
+                encoding = self.tokenizer(
+                    text,
                     truncation=True,
                     padding='max_length',
-                    max_length=self.max_length // 2,  # Reserve space for target
-                    return_tensors='pt'
+                    max_length=self.max_length,
+                    return_tensors=None  # Return lists instead of tensors
                 )
                 
-                # Tokenize target
-                target_encoding = self.tokenizer(
-                    target_text,
-                    truncation=True,
-                    padding='max_length',
-                    max_length=self.max_length // 2,
-                    return_tensors='pt'
-                )
+                # For causal language modeling, labels are the same as input_ids
+                input_ids = encoding['input_ids']
+                attention_mask = encoding['attention_mask']
+                labels = input_ids.copy()  # Labels are same as input for CLM
                 
-                # Combine for autoregressive training
-                combined_input_ids = []
-                combined_attention_mask = []
-                labels = []
-                
-                # Add input tokens
-                input_ids = input_encoding['input_ids'].squeeze().tolist()
-                attention_mask = input_encoding['attention_mask'].squeeze().tolist()
-                
-                combined_input_ids.extend(input_ids)
-                combined_attention_mask.extend(attention_mask)
-                labels.extend([-100] * len(input_ids))  # Ignore input in loss
-                
-                # Add target tokens
-                target_ids = target_encoding['input_ids'].squeeze().tolist()
-                target_attention = target_encoding['attention_mask'].squeeze().tolist()
-                
-                combined_input_ids.extend(target_ids)
-                combined_attention_mask.extend(target_attention)
-                labels.extend(target_ids)  # Use target for loss calculation
-                
-                # Truncate if too long
-                if len(combined_input_ids) > self.max_length:
-                    combined_input_ids = combined_input_ids[:self.max_length]
-                    combined_attention_mask = combined_attention_mask[:self.max_length]
-                    labels = labels[:self.max_length]
-                
-                # Pad if too short
-                while len(combined_input_ids) < self.max_length:
-                    combined_input_ids.append(self.tokenizer.pad_token_id)
-                    combined_attention_mask.append(0)
-                    labels.append(-100)
-                
-                tokenized_data['input_ids'].append(combined_input_ids)
-                tokenized_data['attention_mask'].append(combined_attention_mask)
+                tokenized_data['input_ids'].append(input_ids)
+                tokenized_data['attention_mask'].append(attention_mask)
                 tokenized_data['labels'].append(labels)
                 
             except Exception as e:
@@ -198,10 +184,20 @@ class AnimeQADatasetBuilder:
             dataset_size = len(dataset)
             train_size = int(dataset_size * train_ratio)
             
+            # 应用样本限制
+            if self.max_train_samples and train_size > self.max_train_samples:
+                train_size = self.max_train_samples
+                logger.info(f"Limited training samples to {train_size}")
+            
+            val_size = dataset_size - train_size
+            if self.max_val_samples and val_size > self.max_val_samples:
+                val_size = self.max_val_samples
+                logger.info(f"Limited validation samples to {val_size}")
+            
             # Shuffle and split
             shuffled_dataset = dataset.shuffle(seed=42)
             train_dataset = shuffled_dataset.select(range(train_size))
-            val_dataset = shuffled_dataset.select(range(train_size, dataset_size))
+            val_dataset = shuffled_dataset.select(range(train_size, train_size + val_size))
             
             logger.info(f"Split dataset: {len(train_dataset)} train, {len(val_dataset)} validation")
             return train_dataset, val_dataset
@@ -256,7 +252,6 @@ class AnimeQADatasetBuilder:
                 sample = dataset[0]
                 if 'input_ids' in sample:
                     info['avg_sequence_length'] = len(sample['input_ids'])
-                    info['vocab_size'] = max(sample['input_ids']) + 1 if sample['input_ids'] else 0
             
             return info
             
@@ -267,32 +262,55 @@ class AnimeQADatasetBuilder:
     def build_training_dataset(self, use_database: bool = True, 
                               use_processed_file: bool = True,
                               save_datasets: bool = True) -> Tuple[Dataset, Dataset]:
-        """Build complete training dataset"""
+        """Build complete training dataset with sample limits"""
         try:
             logger.info("Starting training dataset building...")
+            
+            # 首先加载tokenizer
+            if self.tokenizer is None:
+                logger.info("Loading tokenizer before data processing...")
+                self.load_tokenizer()
+            
+            # 计算需要加载的总样本数
+            total_needed = 0
+            if self.max_train_samples:
+                total_needed += self.max_train_samples
+            if self.max_val_samples:
+                total_needed += self.max_val_samples
+            
+            # 如果设置了限制，多加载一些以防重复去除后不够
+            load_limit = int(total_needed * 1.5) if total_needed > 0 else None
+            
+            logger.info(f"Sample limits: train={self.max_train_samples}, val={self.max_val_samples}")
+            if load_limit:
+                logger.info(f"Will load up to {load_limit} samples")
             
             # Collect QA pairs from different sources
             all_qa_pairs = []
             
             # From database
             if use_database:
-                db_pairs = self.get_qa_pairs_from_database()
+                db_pairs = self.get_qa_pairs_from_database(limit=load_limit)
                 all_qa_pairs.extend(db_pairs)
-                logger.info(f"Added {len(db_pairs)} pairs from database")
             
             # From processed file
-            if use_processed_file:
-                file_pairs = self.get_qa_pairs_from_file()
+            if use_processed_file and (not all_qa_pairs or len(all_qa_pairs) < (load_limit or 1000)):
+                remaining_limit = None
+                if load_limit:
+                    remaining_limit = load_limit - len(all_qa_pairs)
+                file_pairs = self.get_qa_pairs_from_file(limit=remaining_limit)
                 all_qa_pairs.extend(file_pairs)
-                logger.info(f"Added {len(file_pairs)} pairs from processed file")
             
             # If no data available, process raw data
             if not all_qa_pairs:
-                logger.info("No existing data found, processing raw dataset...")
-                all_qa_pairs = self.data_processor.process_full_pipeline()
+                logger.info("No existing data found, processing raw data...")
+                qa_pairs = self.data_processor.process_full_pipeline(save_output=True)
+                if load_limit and len(qa_pairs) > load_limit:
+                    qa_pairs = qa_pairs[:load_limit]
+                all_qa_pairs.extend(qa_pairs)
             
             if not all_qa_pairs:
-                raise ValueError("No QA pairs available for training")
+                raise ValueError("No training data available")
             
             # Remove duplicates
             unique_pairs = []
@@ -302,6 +320,10 @@ class AnimeQADatasetBuilder:
                 if question and question not in seen_questions:
                     unique_pairs.append(pair)
                     seen_questions.add(question)
+                    
+                    # 如果有限制且已经够了就停止
+                    if load_limit and len(unique_pairs) >= load_limit:
+                        break
             
             logger.info(f"Removed duplicates: {len(unique_pairs)} unique pairs")
             
@@ -309,7 +331,7 @@ class AnimeQADatasetBuilder:
             training_data = self.prepare_training_data(unique_pairs)
             
             if not training_data:
-                raise ValueError("No valid training data prepared")
+                raise ValueError("No valid training data after preparation")
             
             # Tokenize conversations
             tokenized_data = self.tokenize_conversations(training_data)
@@ -354,12 +376,8 @@ if __name__ == "__main__":
         # Display sample
         if len(train_dataset) > 0:
             sample = train_dataset[0]
-            print(f"\nSample training data shape:")
-            for key, value in sample.items():
-                if isinstance(value, list):
-                    print(f"{key}: length {len(value)}")
-                else:
-                    print(f"{key}: {type(value)}")
+            print(f"\nSample input_ids length: {len(sample['input_ids'])}")
+            print(f"Sample features: {list(sample.keys())}")
         
     except Exception as e:
         print(f"Dataset building failed: {e}")
